@@ -1,0 +1,343 @@
+
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Customer QR Record</title>
+
+<style>
+*{box-sizing:border-box}
+body{
+  margin:0;padding:15px;
+  font-family:Arial,sans-serif;
+  background:#eef2f8;color:#172033
+}
+.container{
+  max-width:500px;margin:auto;
+  background:white;padding:18px;
+  border-radius:15px;
+  box-shadow:0 3px 15px #ccd2df
+}
+h2{text-align:center;color:#164b91}
+label{display:block;font-weight:bold;margin-top:13px}
+input,textarea{
+  width:100%;padding:12px;margin-top:6px;
+  border:1px solid #bbb;border-radius:8px;
+  font-size:16px
+}
+button{
+  border:0;border-radius:8px;padding:12px;
+  font-size:16px;cursor:pointer
+}
+.primary{background:#164b91;color:white;width:100%;margin-top:18px}
+.secondary{background:#e5edfa;color:#123e79}
+.card{
+  border:1px solid #d5dce8;border-radius:10px;
+  padding:12px;margin-top:12px;overflow-wrap:anywhere
+}
+#qrArea{text-align:center;margin-top:20px}
+#qrBox{display:flex;justify-content:center;margin:15px auto}
+#qrBox img,#qrBox canvas{max-width:100%;height:auto!important}
+#preview{max-width:100%;max-height:150px;display:none;margin-top:10px}
+.small{font-size:13px;color:#555;line-height:1.5}
+.hidden{display:none}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.actions button{flex:1}
+</style>
+</head>
+
+<body>
+<div class="container">
+  <h2>ग्राहक QR कोड सिस्टम</h2>
+
+  <form id="customerForm">
+    <label>ग्राहक का नाम</label>
+    <input id="name" required placeholder="पूरा नाम">
+
+    <label>मोबाइल नंबर</label>
+    <input id="mobile" type="tel" inputmode="numeric"
+      pattern="[0-9]{10}" maxlength="10"
+      required placeholder="10 अंकों का नंबर">
+
+    <label>पूरा पता</label>
+    <textarea id="address" required
+      placeholder="ग्राहक का पूरा पता"></textarea>
+
+    <label>टोकन नंबर</label>
+    <input id="token" required placeholder="टोकन नंबर">
+
+    <label>पेमेंट स्क्रीनशॉट</label>
+    <input id="payment" type="file" accept="image/*" required>
+    <img id="preview" alt="Payment preview">
+
+    <button class="primary" type="submit">QR बनाएँ और सेव करें</button>
+  </form>
+
+  <p id="status" class="small"></p>
+
+  <div id="qrArea" class="hidden">
+    <h2>ग्राहक का QR कोड</h2>
+    <div id="customerInfo"></div>
+    <div id="qrBox"></div>
+    <p class="small">
+      QR का स्क्रीनशॉट ले सकते हैं।<br>
+      QR स्कैन करने पर उसमें लिखी जानकारी दिखाई देगी।
+    </p>
+  </div>
+
+  <hr style="margin:25px 0">
+  <h2>सेव किए गए ग्राहक</h2>
+  <p id="count">कुल ग्राहक: 0</p>
+  <div id="records"></div>
+
+  <p class="small">
+    रिकॉर्ड इसी ब्राउज़र में सेव होंगे। ब्राउज़र का डेटा साफ
+    करने पर रिकॉर्ड मिट सकते हैं। यह सिस्टम पेमेंट की पुष्टि
+    नहीं करता। QR में मौजूद निजी जानकारी कोई भी स्कैन करके
+    पढ़ सकता है।
+  </p>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+<script>
+const $ = id => document.getElementById(id);
+const STORAGE_KEY = "customer_qr_records_v1";
+
+let records = [];
+let currentImage = "";
+
+try {
+  records = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+  if (!Array.isArray(records)) records = [];
+} catch (e) {
+  records = [];
+}
+
+function saveRecords() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+    return true;
+  } catch (e) {
+    $("status").textContent =
+      "सेव नहीं हुआ। ब्राउज़र की स्टोरेज भर गई है। छोटे स्क्रीनशॉट से कोशिश करें।";
+    return false;
+  }
+}
+
+function makeId() {
+  return "CUST-" + Date.now() + "-" +
+    Math.random().toString(36).slice(2, 7).toUpperCase();
+}
+
+function compressImage(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onerror = () => reject(new Error("फोटो पढ़ नहीं सकी।"));
+
+    reader.onload = () => {
+      const img = new Image();
+
+      img.onerror = () => reject(new Error("फोटो सही नहीं है।"));
+
+      img.onload = () => {
+        const max = 700;
+        const scale = Math.min(1, max / Math.max(img.width, img.height));
+        const canvas = document.createElement("canvas");
+
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+        resolve(canvas.toDataURL("image/jpeg", 0.55));
+      };
+
+      img.src = reader.result;
+    };
+
+    reader.readAsDataURL(file);
+  });
+}
+
+$("payment").addEventListener("change", () => {
+  const file = $("payment").files[0];
+  $("preview").style.display = "none";
+
+  if (!file) return;
+
+  if (!file.type.startsWith("image/")) {
+    alert("कृपया इमेज स्क्रीनशॉट चुनें।");
+    $("payment").value = "";
+    return;
+  }
+
+  if (file.size > 5 * 1024 * 1024) {
+    alert("स्क्रीनशॉट 5 MB से छोटा चुनें।");
+    $("payment").value = "";
+    return;
+  }
+
+  $("preview").src = URL.createObjectURL(file);
+  $("preview").style.display = "block";
+});
+
+function makeQR(data) {
+  $("qrBox").innerHTML = "";
+
+  if (typeof QRCode === "undefined") {
+    $("status").textContent =
+      "QR लाइब्रेरी नहीं खुली। इंटरनेट चालू करके पेज दोबारा खोलें।";
+    return;
+  }
+
+  new QRCode($("qrBox"), {
+    text: data,
+    width: 260,
+    height: 260,
+    correctLevel: QRCode.CorrectLevel.L
+  });
+
+  $("qrArea").classList.remove("hidden");
+}
+
+function qrText(r) {
+  return [
+    "Customer ID: " + r.id,
+    "Name: " + r.name,
+    "Mobile: " + r.mobile,
+    "Address: " + r.address,
+    "Token: " + r.token,
+    "Payment: NOT VERIFIED"
+  ].join("\n");
+}
+
+function showRecord(r) {
+  $("customerInfo").textContent =
+    "नाम: " + r.name + " | टोकन: " + r.token;
+
+  makeQR(qrText(r));
+
+  $("qrArea").scrollIntoView({
+    behavior: "smooth",
+    block: "start"
+  });
+}
+
+$("customerForm").addEventListener("submit", async e => {
+  e.preventDefault();
+
+  if (typeof QRCode === "undefined") {
+    $("status").textContent =
+      "QR लाइब्रेरी नहीं खुली। इंटरनेट चालू करें।";
+    return;
+  }
+
+  const name = $("name").value.trim();
+  const mobile = $("mobile").value.trim();
+  const address = $("address").value.trim();
+  const token = $("token").value.trim();
+  const file = $("payment").files[0];
+
+  if (!file) {
+    alert("पेमेंट स्क्रीनशॉट चुनें।");
+    return;
+  }
+
+  if (records.some(r => r.token.toLowerCase() === token.toLowerCase())) {
+    alert("यह टोकन नंबर पहले से सेव है। दूसरा टोकन नंबर लिखें।");
+    return;
+  }
+
+  $("status").textContent = "रिकॉर्ड सेव किया जा रहा है...";
+
+  try {
+    const imageData = await compressImage(file);
+
+    const record = {
+      id: makeId(),
+      name,
+      mobile,
+      address,
+      token,
+      paymentImage: imageData,
+      createdAt: new Date().toLocaleString("hi-IN")
+    };
+
+    records.unshift(record);
+
+    if (!saveRecords()) {
+      records.shift();
+      return;
+    }
+
+    $("status").textContent = "ग्राहक का रिकॉर्ड सेव हो गया।";
+
+    $("customerForm").reset();
+    $("preview").style.display = "none";
+
+    renderRecords();
+    showRecord(record);
+
+  } catch (err) {
+    $("status").textContent = err.message || "रिकॉर्ड सेव नहीं हुआ।";
+  }
+});
+
+function renderRecords() {
+  $("count").textContent = "कुल ग्राहक: " + records.length;
+  $("records").innerHTML = "";
+
+  if (records.length === 0) {
+    $("records").textContent = "अभी कोई ग्राहक सेव नहीं है।";
+    return;
+  }
+
+  records.forEach(r => {
+    const card = document.createElement("div");
+    card.className = "card";
+
+    const info = document.createElement("div");
+    info.textContent =
+      "नाम: " + r.name +
+      "\nमोबाइल: " + r.mobile +
+      "\nटोकन: " + r.token +
+      "\nसमय: " + r.createdAt;
+    info.style.whiteSpace = "pre-line";
+
+    const actions = document.createElement("div");
+    actions.className = "actions";
+
+    const view = document.createElement("button");
+    view.className = "secondary";
+    view.textContent = "QR देखें";
+    view.onclick = () => showRecord(r);
+
+    const photo = document.createElement("button");
+    photo.className = "secondary";
+    photo.textContent = "पेमेंट फोटो देखें";
+    photo.onclick = () => {
+      const w = window.open();
+      if (!w) {
+        alert("ब्राउज़र ने नई विंडो रोकी।");
+        return;
+      }
+      const img = w.document.createElement("img");
+      img.src = r.paymentImage;
+      img.style.maxWidth = "100%";
+      w.document.body.appendChild(img);
+    };
+
+    actions.append(view, photo);
+    card.append(info, actions);
+    $("records").appendChild(card);
+  });
+}
+
+renderRecords();
+</script>
+</body>
+</html>
